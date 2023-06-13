@@ -24,7 +24,7 @@
 #define TAG_GATHER		'G'
 
 // how many elements are in the big signal:
-#define NUMELEMENTS	(1*1024*1024)
+#define NUMELEMENTS	(1024*1024)
 
 // only consider this many periods (this is enough to uncover the secret sine waves):
 #define MAXPERIODS	100
@@ -33,19 +33,18 @@
 #define BINARY
 
 // print debugging messages?
-#define DEBUG		true
+#define DEBUG	false
 
 // globals:
-float*  BigSums;		  // the overall MAXPERIODS autocorrelation array
+float*  BigSums;	// the overall MAXPERIODS autocorrelation array
 float*	BigSignal;	// the overall NUMELEMENTS-big signal data
-int	    NumCpus;		    // total # of cpus involved
-float*  PPSums;			// per-processor autocorrelation sums
-float*	PPSignal;		// per-processor local array to hold the sub-signal
-int	    PPSize;			    // per-processor local array size
+int	    NumCpus;	// total # of cpus involved
+float*  PPSums;		// per-processor autocorrelation sums
+float*	PPSignal;	// per-processor local array to hold the sub-signal
+int	    PPSize;		// per-processor local array size
 
 // function prototype:
 void	DoOneLocalFourier(int);
-
 
 int main(int argc, char *argv[]) {
 	MPI_Status status;
@@ -57,11 +56,11 @@ int main(int argc, char *argv[]) {
 	MPI_Comm_rank(MPI_COMM_WORLD, &me);
 
 	// decide how much data to send to each processor:
-	PPSize = ?????
+	PPSize = NUMELEMENTS / NumCpus;
 
 	// local arrays:
-	PPSignal  = new float [PPSize];			  // per-processor signal
-	PPSums    = new float [MAXPERIODS];	  // per-processor sums of the products
+	PPSignal  = new float [PPSize];		// per-processor signal
+	PPSums    = new float [MAXPERIODS];	// per-processor sums of the products
 
 	// read the BigSignal array:
 	if(me == BOSS) { // this is the big-data-owner
@@ -102,23 +101,19 @@ int main(int argc, char *argv[]) {
 
 	// have the BOSS send to itself (really not a "send", just a copy):
 	if(me == BOSS) {
-		for(int i = 0; i < PPSize; i++) {
-			PPSignal[i] = BigSignal[BOSS*PPSize + i];
-		}
+		for(int i = 0; i < PPSize; i++)
+			PPSignal[i] = BigSignal[i];
 	}
 
 	// getting the signal data distributed:
 	if(me == BOSS) {
 		// have the BOSS send to everyone else:
-		for(int dst = 0; dst < NumCpus; dst++) {
-			if(dst == BOSS)
-				continue;
+		for(int dst = 1; dst < NumCpus; dst++)
+			MPI_Send(&BigSignal[dst * PPSize], PPSize, MPI_FLOAT, dst, TAG_SCATTER, MPI_COMM_WORLD);
 
-			MPI_Send(?????, ?????, MPI_FLOAT, ?????, TAG_SCATTER, MPI_COMM_WORLD);
-		}
 	} else {
 		// have everyone else receive from the BOSS:
-		MPI_Recv(?????, ?????, MPI_FLOAT, ?????, TAG_SCATTER, MPI_COMM_WORLD, &status);
+		MPI_Recv(PPSignal, PPSize, MPI_FLOAT, BOSS, TAG_SCATTER, MPI_COMM_WORLD, &status);
 	}
 
 	// each processor does its own autocorrelation:
@@ -132,18 +127,15 @@ int main(int argc, char *argv[]) {
 		}
 	} else {
 		// each processor sends its sums back to the BOSS:
-		MPI_Send(?????, ?????, MPI_FLOAT, ?????, TAG_GATHER, MPI_COMM_WORLD);
+		MPI_Send(PPSums, MAXPERIODS, MPI_FLOAT, BOSS, TAG_GATHER, MPI_COMM_WORLD);
 	}
 
 	// the BOSS receives the sums and adds them into the overall sums:
 	if(me == BOSS) {
 		float tmpSums[MAXPERIODS];
-		for(int src = 0; src < NumCpus; src++) {
-			if(src == BOSS)
-				continue;
-
+		for(int src = 1; src < NumCpus; src++) {
 			// the BOSS receives everyone else's sums:
-			MPI_Recv(tmpSums, ?????, MPI_FLOAT, ?????, TAG_GATHER, MPI_COMM_WORLD, &status);
+			MPI_Recv(tmpSums, MAXPERIODS, MPI_FLOAT, src, TAG_GATHER, MPI_COMM_WORLD, &status);
 			for(int s = 0; s < MAXPERIODS; s++)
 				BigSums[s] += tmpSums[s];
 		}
@@ -156,7 +148,7 @@ int main(int argc, char *argv[]) {
 	if(me == BOSS) {
 		double seconds = time1 - time0;
     double performance = (double)NumCpus*(double)MAXPERIODS*(double)PPSize/seconds/1000000.;        // mega-mults computed per second
-    fprintf(stderr, "%3d processors, %10d elements, %9.2lf mega-multiplies computed per second\n", NumCpus, NUMELEMENTS, performance);
+    fprintf(stderr, "%3d, %10d, %9.2lf\n", NumCpus, NUMELEMENTS, performance);
 	}
 
 	// write the file to be plotted to look for the secret sine wave periods:
